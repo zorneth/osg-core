@@ -1,14 +1,7 @@
-// Copyright 2026 the osg-port authors
-// SPDX-License-Identifier: Apache-2.0
-//
-// Host-pattern matching semantics adapted from NVIDIA OpenShell
-// (crates/openshell-core/src/host_pattern.rs), Apache-2.0.
-
-// Package hostpattern implements DNS-label-aware host globs used by network policy.
+// Package hostpattern implements DNS-label-aware host globs for network policy.
 //
 // Matching is case-insensitive. A '*' wildcard stays within one DNS label,
-// while a label consisting only of '**' consumes one or more labels — same
-// idea as OpenShell / Rego glob.match with a '.' delimiter.
+// while a label consisting only of '**' consumes one or more labels.
 package hostpattern
 
 import (

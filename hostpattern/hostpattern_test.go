@@ -1,6 +1,3 @@
-// Copyright 2026 the osg-port authors
-// SPDX-License-Identifier: Apache-2.0
-
 package hostpattern
 
 import "testing"
