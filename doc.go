@@ -4,10 +4,7 @@ package core
 // ID is an opaque sandbox or resource identifier.
 type ID string
 
-// Sentinel errors for stub surfaces.
-var (
-	ErrNotImplemented = errNotImplemented{}
-)
+var ErrNotImplemented = errNotImplemented{}
 
 type errNotImplemented struct{}
 

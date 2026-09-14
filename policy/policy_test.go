@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/lkmavi/osg-core/engine"
-	"github.com/lkmavi/osg-core/policy"
+	"github.com/zorneth/osg-core/engine"
+	"github.com/zorneth/osg-core/policy"
 )
 
 const sampleOurs = `
@@ -30,7 +30,7 @@ credentials:
   env_allow: [TERM, LANG]
 `
 
-const sampleOpenShell = `
+const sampleLegacy = `
 version: 1
 filesystem_policy:
   include_workdir: true
@@ -68,8 +68,8 @@ func TestParseOurs(t *testing.T) {
 	}
 }
 
-func TestImportOpenShell(t *testing.T) {
-	doc, err := policy.Parse([]byte(sampleOpenShell))
+func TestImportLegacy(t *testing.T) {
+	doc, err := policy.Parse([]byte(sampleLegacy))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,5 +133,79 @@ func TestLoadFile(t *testing.T) {
 	}
 	if err := doc.Validate(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+const sampleInference = `
+version: 1
+network:
+  default: deny
+inference:
+  providers: [anthropic, openai]
+  allow:
+    - id: custom
+      host: llm.example.com
+      port: 443
+`
+
+func TestInferenceProviders(t *testing.T) {
+	doc, err := policy.Parse([]byte(sampleInference))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := doc.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	rules := doc.AllowRules()
+	if len(rules) != 3 {
+		t.Fatalf("allow=%d %+v", len(rules), rules)
+	}
+	var eng engine.Allowlist
+	if err := eng.Apply(doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, host := range []string{"api.anthropic.com", "api.openai.com", "llm.example.com"} {
+		d, err := eng.Decide(context.Background(), engine.EgressRequest{Host: host, Port: 443})
+		if err != nil || !d.Allow {
+			t.Fatalf("%s: %+v %v", host, d, err)
+		}
+	}
+	deny, _ := eng.Decide(context.Background(), engine.EgressRequest{Host: "evil.example", Port: 443})
+	if deny.Allow {
+		t.Fatal("expected deny")
+	}
+}
+
+func TestInferenceUnknownProvider(t *testing.T) {
+	doc, err := policy.Parse([]byte("version: 1\ninference:\n  providers: [nope]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := doc.Validate(); err == nil {
+		t.Fatal("expected unknown provider error")
+	}
+}
+
+func TestCredentialEnvKeysFromProviders(t *testing.T) {
+	doc, err := policy.Parse([]byte(`
+version: 1
+inference:
+  providers: [anthropic, openai]
+credentials:
+  env_allow: [TERM]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := doc.CredentialEnvKeys()
+	want := map[string]bool{"TERM": true, "ANTHROPIC_API_KEY": true, "OPENAI_API_KEY": true}
+	for _, k := range keys {
+		if !want[k] {
+			t.Fatalf("unexpected key %q in %v", k, keys)
+		}
+		delete(want, k)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing keys %v", want)
 	}
 }
