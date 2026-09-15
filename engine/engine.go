@@ -221,6 +221,7 @@ func (a *Allowlist) gateBinary(binary string) error {
 }
 
 func (a *Allowlist) matchL4(req EgressRequest) (compiledEndpoint, bool) {
+	var matches []compiledEndpoint
 	for _, ep := range a.endpoints {
 		if ep.hasHost {
 			if !ep.pattern.Match(req.Host) {
@@ -240,9 +241,25 @@ func (a *Allowlist) matchL4(req EgressRequest) (compiledEndpoint, bool) {
 				continue
 			}
 		}
-		return ep, true
+		matches = append(matches, ep)
 	}
-	return compiledEndpoint{}, false
+	if len(matches) == 0 {
+		return compiledEndpoint{}, false
+	}
+	// Prefer provider/inference rules that bind credentials (OpenShell endpoint binding)
+	// over bare L4 allow entries when both match the same host:port.
+	best := matches[0]
+	for _, ep := range matches[1:] {
+		bestKeys := len(best.rule.CredentialKeys) > 0
+		epKeys := len(ep.rule.CredentialKeys) > 0
+		switch {
+		case epKeys && !bestKeys:
+			best = ep
+		case epKeys == bestKeys && ep.rule.NeedsL7() && !best.rule.NeedsL7():
+			best = ep
+		}
+	}
+	return best, true
 }
 
 func displayHost(ep compiledEndpoint) string {
@@ -257,8 +274,47 @@ func binaryAllowed(allowed []string, binary string) bool {
 		if a == "/**" || a == "*" || a == binary {
 			return true
 		}
-		if ok, err := path.Match(a, binary); err == nil && ok {
+		if matchBinaryGlob(a, binary) {
 			return true
+		}
+	}
+	return false
+}
+
+// matchBinaryGlob supports Go path.Match plus trailing /** (recursive) and
+// mid-path /** segments, so /opt/cursor-agent/** matches
+// /opt/cursor-agent/versions/<ver>/node (SO_PEERCRED realpath).
+func matchBinaryGlob(pattern, binary string) bool {
+	if ok, err := path.Match(pattern, binary); err == nil && ok {
+		return true
+	}
+	if strings.HasSuffix(pattern, "/**") {
+		prefix := strings.TrimSuffix(pattern, "/**")
+		if binary == prefix || strings.HasPrefix(binary, prefix+"/") {
+			return true
+		}
+	}
+	if strings.Contains(pattern, "/**/") {
+		parts := strings.Split(pattern, "/**/")
+		if len(parts) == 2 {
+			pre, post := parts[0], parts[1]
+			if strings.HasPrefix(binary, pre+"/") {
+				rest := binary[len(pre)+1:]
+				if ok, err := path.Match(post, path.Base(rest)); err == nil && ok {
+					return true
+				}
+				if ok, err := path.Match("*/"+post, rest); err == nil && ok {
+					return true
+				}
+				// any depth before post
+				segs := strings.Split(rest, "/")
+				for i := range segs {
+					cand := strings.Join(segs[i:], "/")
+					if ok, err := path.Match(post, cand); err == nil && ok {
+						return true
+					}
+				}
+			}
 		}
 	}
 	return false

@@ -37,6 +37,33 @@ func TestBinaryScopedRule(t *testing.T) {
 	}
 }
 
+func TestBinaryGlobRecursive(t *testing.T) {
+	doc := policy.Document{
+		Version: 1,
+		Network: &policy.Network{
+			Default: "deny",
+			Allow: []policy.AllowRule{{
+				ID: "cursor", Host: "api2.cursor.sh", Port: 443,
+				Binaries: []string{"/opt/cursor-agent/**"},
+				CredentialKeys: []string{"CURSOR_API_KEY"},
+				Protocol: "rest", TLS: "terminate", Access: "read-write",
+			}},
+		},
+	}
+	eng := &engine.Allowlist{}
+	if err := eng.Apply(doc); err != nil {
+		t.Fatal(err)
+	}
+	node := "/opt/cursor-agent/versions/2026.09.10-fd3934a/node"
+	d, _ := eng.Decide(context.Background(), engine.EgressRequest{Host: "api2.cursor.sh", Port: 443, Binary: node})
+	if !d.Allow {
+		t.Fatalf("node under /opt/cursor-agent/** should allow: %s", d.Reason)
+	}
+	if d.Matched == nil || len(d.Matched.Rule.CredentialKeys) == 0 {
+		t.Fatal("expected credential-bound rule")
+	}
+}
+
 func TestAuditEnforcementL7(t *testing.T) {
 	doc := policy.Document{
 		Version: 1,

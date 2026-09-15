@@ -67,8 +67,9 @@ type AllowRule struct {
 	AllowedIPs []string     `yaml:"allowed_ips,omitempty" json:"allowed_ips,omitempty"` // CIDR/IP; private IPs need this
 	// Enforcement is enforce (default) or audit (log L7 violations but allow).
 	Enforcement string `yaml:"enforcement,omitempty" json:"enforcement,omitempty"`
-	// CredentialKeys is set by provider composition (not user YAML); binds rewrite scope.
-	CredentialKeys []string `yaml:"-" json:"-"`
+	// CredentialKeys binds osg:resolve:env:KEY rewrite to this endpoint (OpenShell-style).
+	// Set by provider Compose; may also be authored in YAML. Empty = no static credential rewrite.
+	CredentialKeys []string `yaml:"credential_keys,omitempty" json:"credential_keys,omitempty"`
 	// WebsocketCredentialRewrite enables placeholder rewrite on client WS text frames.
 	WebsocketCredentialRewrite bool `yaml:"websocket_credential_rewrite,omitempty" json:"websocket_credential_rewrite,omitempty"`
 }

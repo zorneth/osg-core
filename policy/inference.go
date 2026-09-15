@@ -40,6 +40,8 @@ var BuiltinProviders = map[string]ProviderPreset{
 		ID: "anthropic",
 		Rules: []AllowRule{{
 			ID: "inference.anthropic", Host: "api.anthropic.com", Port: 443,
+			Protocol: ProtocolREST, TLS: TLSTerminate, Access: AccessReadWrite,
+			CredentialKeys: []string{"ANTHROPIC_API_KEY"},
 		}},
 		EnvKeys: []string{"ANTHROPIC_API_KEY"},
 	},
@@ -47,6 +49,8 @@ var BuiltinProviders = map[string]ProviderPreset{
 		ID: "openai",
 		Rules: []AllowRule{{
 			ID: "inference.openai", Host: "*.openai.com", Ports: []int{443},
+			Protocol: ProtocolREST, TLS: TLSTerminate, Access: AccessReadWrite,
+			CredentialKeys: []string{"OPENAI_API_KEY"},
 		}},
 		EnvKeys: []string{"OPENAI_API_KEY"},
 	},
@@ -54,6 +58,8 @@ var BuiltinProviders = map[string]ProviderPreset{
 		ID: "openrouter",
 		Rules: []AllowRule{{
 			ID: "inference.openrouter", Host: "openrouter.ai", Port: 443,
+			Protocol: ProtocolREST, TLS: TLSTerminate, Access: AccessReadWrite,
+			CredentialKeys: []string{"OPENROUTER_API_KEY"},
 		}},
 		EnvKeys: []string{"OPENROUTER_API_KEY"},
 	},
@@ -61,6 +67,8 @@ var BuiltinProviders = map[string]ProviderPreset{
 		ID: "google",
 		Rules: []AllowRule{{
 			ID: "inference.google", Host: "generativelanguage.googleapis.com", Port: 443,
+			Protocol: ProtocolREST, TLS: TLSTerminate, Access: AccessReadWrite,
+			CredentialKeys: []string{"GOOGLE_API_KEY", "GEMINI_API_KEY"},
 		}},
 		EnvKeys: []string{"GOOGLE_API_KEY", "GEMINI_API_KEY"},
 	},
@@ -68,6 +76,8 @@ var BuiltinProviders = map[string]ProviderPreset{
 		ID: "groq",
 		Rules: []AllowRule{{
 			ID: "inference.groq", Host: "api.groq.com", Port: 443,
+			Protocol: ProtocolREST, TLS: TLSTerminate, Access: AccessReadWrite,
+			CredentialKeys: []string{"GROQ_API_KEY"},
 		}},
 		EnvKeys: []string{"GROQ_API_KEY"},
 	},
@@ -137,6 +147,9 @@ func ExpandInferenceRules(inf *Inference) ([]AllowRule, error) {
 				if strings.TrimSpace(rule.Host) == "" {
 					return nil, fmt.Errorf("policy: inference.profiles[%d].hosts[%d]: host required", i, j)
 				}
+				if len(rule.CredentialKeys) == 0 && len(p.EnvKeys) > 0 {
+					rule.CredentialKeys = append([]string{}, p.EnvKeys...)
+				}
 				out = append(out, rule)
 			}
 			continue
@@ -145,10 +158,11 @@ func ExpandInferenceRules(inf *Inference) ([]AllowRule, error) {
 			return nil, fmt.Errorf("policy: inference.profiles[%d]: host or hosts required", i)
 		}
 		rule := AllowRule{
-			ID:    "inference.profile." + id,
-			Host:  p.Host,
-			Port:  p.Port,
-			Ports: append([]int{}, p.Ports...),
+			ID:             "inference.profile." + id,
+			Host:           p.Host,
+			Port:           p.Port,
+			Ports:          append([]int{}, p.Ports...),
+			CredentialKeys: append([]string{}, p.EnvKeys...),
 		}
 		out = append(out, rule)
 	}

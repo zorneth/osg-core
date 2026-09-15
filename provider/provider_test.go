@@ -6,6 +6,66 @@ import (
 	"github.com/zorneth/osg-core/policy"
 )
 
+func TestParseGitHubProfile(t *testing.T) {
+	const yaml = `
+id: github
+category: source_control
+binaries: [/usr/bin/gh, /usr/bin/git]
+credentials:
+  - name: api_token
+    env_vars: [GITHUB_TOKEN, GH_TOKEN]
+    required: true
+endpoints:
+  - id: api
+    host: api.github.com
+    port: 443
+    protocol: rest
+    tls: terminate
+    access: read-only
+  - id: git
+    host: github.com
+    port: 443
+    protocol: rest
+    tls: terminate
+    rules:
+      - allow: { method: GET, path: "**" }
+      - allow: { method: POST, path: "/**/git-upload-pack" }
+`
+	p, err := ParseYAML([]byte(yaml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.ID != "github" || len(p.Endpoints) != 2 {
+		t.Fatalf("%+v", p)
+	}
+	keys := p.EnvKeys()
+	if len(keys) != 2 || keys[0] != "GITHUB_TOKEN" || keys[1] != "GH_TOKEN" {
+		t.Fatalf("keys=%v", keys)
+	}
+}
+
+func TestDiscoverEnvVars(t *testing.T) {
+	p := Profile{
+		ID: "github",
+		Credentials: []Credential{{
+			Name: "api_token", EnvVars: []string{"GITHUB_TOKEN", "GH_TOKEN"}, Required: true,
+		}},
+	}
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "tok")
+	keys, err := p.DiscoverEnvVars()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 1 || keys[0] != "GH_TOKEN" {
+		t.Fatalf("%v", keys)
+	}
+	t.Setenv("GH_TOKEN", "")
+	if _, err := p.DiscoverEnvVars(); err == nil {
+		t.Fatal("expected missing credential error")
+	}
+}
+
 func TestCompose(t *testing.T) {
 	base := policy.Document{
 		Version: 1,

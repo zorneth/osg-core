@@ -23,15 +23,18 @@ type Profile struct {
 	Credentials []Credential     `yaml:"credentials,omitempty" json:"credentials,omitempty"`
 }
 
-// Credential declares env keys for an attached instance (values stay on host).
-// AuthStyle and Header are catalog metadata for future auto-injection; MVP rewrite
-// uses osg:resolve:env:KEY placeholders in policy and does not read these fields.
+// Credential declares env keys for an attached instance.
+// Values live in the gateway secret store; guests see osg:resolve:env:KEY
+// placeholders unless InjectEnv is false (sidecar-only — Cursor OAuth path).
 type Credential struct {
 	Name      string   `yaml:"name" json:"name"`
 	EnvVars   []string `yaml:"env_vars,omitempty" json:"env_vars,omitempty"`
 	AuthStyle string   `yaml:"auth_style,omitempty" json:"auth_style,omitempty"` // reserved: bearer|header|basic|query|path
 	Header    string   `yaml:"header_name,omitempty" json:"header_name,omitempty"`
 	Required  bool     `yaml:"required,omitempty" json:"required,omitempty"`
+	// InjectEnv controls guest env placeholders. nil/omitted → true.
+	// Set false for agents that client-validate API keys (e.g. Cursor Agent).
+	InjectEnv *bool `yaml:"inject_env,omitempty" json:"inject_env,omitempty"`
 }
 
 // Instance is a named provider on a gateway (env key refs only, no secret values).
@@ -128,6 +131,67 @@ func (p Profile) EnvKeys() []string {
 	return out
 }
 
+// GuestEnvKeys returns credential env keys that should be injected into the guest
+// as osg:resolve:env placeholders (excludes inject_env: false).
+func (p Profile) GuestEnvKeys() []string {
+	var out []string
+	seen := map[string]struct{}{}
+	for _, c := range p.Credentials {
+		if c.InjectEnv != nil && !*c.InjectEnv {
+			continue
+		}
+		for _, k := range c.EnvVars {
+			k = strings.TrimSpace(k)
+			if k == "" {
+				continue
+			}
+			if _, ok := seen[k]; ok {
+				continue
+			}
+			seen[k] = struct{}{}
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// DiscoverEnvVars picks host env keys for a provider instance (OpenShell --from-existing).
+// For each credential, the first non-empty env_vars entry wins. Required credentials
+// with no value on the host return an error. Values are never returned — only key names.
+func (p Profile) DiscoverEnvVars() ([]string, error) {
+	var out []string
+	seen := map[string]struct{}{}
+	for _, c := range p.Credentials {
+		found := ""
+		for _, k := range c.EnvVars {
+			k = strings.TrimSpace(k)
+			if k == "" {
+				continue
+			}
+			if v, ok := os.LookupEnv(k); ok && strings.TrimSpace(v) != "" {
+				found = k
+				break
+			}
+		}
+		if found == "" {
+			if c.Required {
+				want := strings.Join(c.EnvVars, "|")
+				return nil, fmt.Errorf("provider %q: credential %q missing on host (export %s)", p.ID, c.Name, want)
+			}
+			continue
+		}
+		if _, ok := seen[found]; ok {
+			continue
+		}
+		seen[found] = struct{}{}
+		out = append(out, found)
+	}
+	if len(out) == 0 && len(p.Credentials) > 0 {
+		return nil, fmt.Errorf("provider %q: no credential env vars found on host", p.ID)
+	}
+	return out, nil
+}
+
 // Layer is one attached provider contribution.
 type Layer struct {
 	InstanceName string
@@ -166,6 +230,25 @@ func Compose(base policy.Document, layers []Layer, suppressProviders bool) polic
 		if len(keys) == 0 {
 			keys = p.EnvKeys()
 		}
+		guestKeys := p.GuestEnvKeys()
+		if len(layer.EnvVars) > 0 {
+			// Instance override: still honor profile inject_env:false exclusions.
+			omit := map[string]struct{}{}
+			for _, c := range p.Credentials {
+				if c.InjectEnv != nil && !*c.InjectEnv {
+					for _, k := range c.EnvVars {
+						omit[strings.TrimSpace(k)] = struct{}{}
+					}
+				}
+			}
+			guestKeys = nil
+			for _, k := range keys {
+				if _, skip := omit[k]; skip {
+					continue
+				}
+				guestKeys = append(guestKeys, k)
+			}
+		}
 		for i, ep := range p.Endpoints {
 			rule := ep
 			if rule.ID == "" {
@@ -179,7 +262,7 @@ func Compose(base policy.Document, layers []Layer, suppressProviders bool) polic
 			rule.CredentialKeys = append([]string{}, keys...)
 			out.Network.Allow = append(out.Network.Allow, rule)
 		}
-		for _, k := range keys {
+		for _, k := range guestKeys {
 			if _, ok := envSeen[k]; ok {
 				continue
 			}
