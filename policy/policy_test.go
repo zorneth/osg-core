@@ -10,55 +10,39 @@ import (
 	"github.com/zorneth/osg-core/policy"
 )
 
-const sampleOurs = `
-version: 1
-filesystem:
-  include_workdir: true
-  read: [/usr, /lib]
-  write: [/tmp]
-  mode: best_effort
-network:
-  default: deny
-  allow:
-    - id: anthropic
-      host: api.anthropic.com
-      port: 443
-    - id: openai
-      host: "*.openai.com"
-      ports: [443]
-credentials:
-  env_allow: [TERM, LANG]
-`
-
-const sampleLegacy = `
+const sampleOpenShell = `
 version: 1
 filesystem_policy:
   include_workdir: true
-  read_only: [/usr]
+  read_only: [/usr, /lib]
   read_write: [/tmp]
 landlock:
   compatibility: best_effort
 network_policies:
-  model_apis:
-    name: model-apis
+  anthropic:
+    name: anthropic
     endpoints:
       - host: api.anthropic.com
         port: 443
-osg:
-  credentials:
-    env_allow: [TERM]
+  openai:
+    name: openai
+    endpoints:
+      - host: "*.openai.com"
+        ports: [443]
+credentials:
+  env_allow: [TERM, LANG]
 `
 
-func TestParseOurs(t *testing.T) {
-	doc, err := policy.Parse([]byte(sampleOurs))
+func TestParseOpenShellNaming(t *testing.T) {
+	doc, err := policy.Parse([]byte(sampleOpenShell))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := doc.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if doc.Filesystem == nil || !doc.Filesystem.IncludeWorkdir {
-		t.Fatal("filesystem.include_workdir")
+	if !doc.IncludeWorkdir() {
+		t.Fatal("filesystem_policy.include_workdir")
 	}
 	if doc.HardenMode() != "best_effort" {
 		t.Fatalf("mode=%q", doc.HardenMode())
@@ -68,27 +52,21 @@ func TestParseOurs(t *testing.T) {
 	}
 }
 
-func TestImportLegacy(t *testing.T) {
-	doc, err := policy.Parse([]byte(sampleLegacy))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := doc.Validate(); err != nil {
-		t.Fatal(err)
-	}
-	if doc.Filesystem == nil || len(doc.Filesystem.Read) != 1 {
-		t.Fatalf("fs=%+v", doc.Filesystem)
-	}
-	if len(doc.AllowRules()) != 1 || doc.AllowRules()[0].Host != "api.anthropic.com" {
-		t.Fatalf("allow=%+v", doc.AllowRules())
-	}
-	if doc.Credentials == nil || len(doc.Credentials.EnvAllow) != 1 {
-		t.Fatal("credentials from osg:")
+func TestRejectRemovedSchema(t *testing.T) {
+	_, err := policy.Parse([]byte(`
+version: 1
+filesystem:
+  read: [/usr]
+network:
+  default: deny
+`))
+	if err == nil {
+		t.Fatal("expected reject of removed filesystem/network keys")
 	}
 }
 
 func TestEngineAllowDeny(t *testing.T) {
-	doc, err := policy.Parse([]byte(sampleOurs))
+	doc, err := policy.Parse([]byte(sampleOpenShell))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +85,7 @@ func TestEngineAllowDeny(t *testing.T) {
 }
 
 func TestEmptyNetworkDenyAll(t *testing.T) {
-	doc, err := policy.Parse([]byte("version: 1\nnetwork:\n  default: deny\n"))
+	doc, err := policy.Parse([]byte("version: 1\nnetwork_policies: {}\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +102,7 @@ func TestEmptyNetworkDenyAll(t *testing.T) {
 func TestLoadFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "p.yaml")
-	if err := os.WriteFile(path, []byte(sampleOurs), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(sampleOpenShell), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	doc, err := policy.Load(path)
@@ -138,8 +116,7 @@ func TestLoadFile(t *testing.T) {
 
 const sampleInference = `
 version: 1
-network:
-  default: deny
+network_policies: {}
 inference:
   providers: [anthropic, openai]
   allow:
@@ -207,5 +184,19 @@ credentials:
 	}
 	if len(want) != 0 {
 		t.Fatalf("missing keys %v", want)
+	}
+}
+
+func TestLandlockHardRequirement(t *testing.T) {
+	doc, err := policy.Parse([]byte(`
+version: 1
+landlock:
+  compatibility: hard_requirement
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc.HardenMode() != "required" {
+		t.Fatalf("mode=%q", doc.HardenMode())
 	}
 }

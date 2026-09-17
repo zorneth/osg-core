@@ -12,7 +12,7 @@ type Inference struct {
 	Providers []string `yaml:"providers,omitempty" json:"providers,omitempty"`
 	// Profiles are named custom providers (Providers v2).
 	Profiles []ProviderProfile `yaml:"profiles,omitempty" json:"profiles,omitempty"`
-	// Allow is extra host/port rules (same shape as network.allow).
+	// Allow is extra host/port rules (same shape as network_policies endpoints).
 	Allow []AllowRule `yaml:"allow,omitempty" json:"allow,omitempty"`
 }
 

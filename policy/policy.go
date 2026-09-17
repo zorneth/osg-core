@@ -1,4 +1,4 @@
-// Package policy defines the canonical sandbox policy YAML schema and validation.
+// Package policy defines the OpenShell-shaped sandbox policy YAML schema.
 package policy
 
 import (
@@ -6,50 +6,63 @@ import (
 	"net"
 	"os"
 	"path"
+	"sort"
 	"strings"
 
 	"github.com/zorneth/osg-core/defaults"
 	"gopkg.in/yaml.v3"
 )
 
-// Document is the canonical osg sandbox policy (product schema).
+// Document is the canonical sandbox policy (OpenShell YAML naming).
 type Document struct {
-	Version     int          `yaml:"version" json:"version"`
-	Filesystem  *Filesystem  `yaml:"filesystem,omitempty" json:"filesystem,omitempty"`
-	Process     *Process     `yaml:"process,omitempty" json:"process,omitempty"`
-	Network     *Network     `yaml:"network,omitempty" json:"network,omitempty"`
-	Inference   *Inference   `yaml:"inference,omitempty" json:"inference,omitempty"`
-	Display     *Display     `yaml:"display,omitempty" json:"display,omitempty"`
-	Credentials *Credentials `yaml:"credentials,omitempty" json:"credentials,omitempty"`
+	Version            int                       `yaml:"version" json:"version"`
+	FilesystemPolicy   *FilesystemPolicy         `yaml:"filesystem_policy,omitempty" json:"filesystem_policy,omitempty"`
+	Landlock           *Landlock                 `yaml:"landlock,omitempty" json:"landlock,omitempty"`
+	Process            *Process                  `yaml:"process,omitempty" json:"process,omitempty"`
+	NetworkPolicies    map[string]NetworkPolicy  `yaml:"network_policies,omitempty" json:"network_policies,omitempty"`
+	NetworkMiddlewares map[string]yaml.Node      `yaml:"network_middlewares,omitempty" json:"network_middlewares,omitempty"`
+	Inference          *Inference                `yaml:"inference,omitempty" json:"inference,omitempty"`
+	Display            *Display                  `yaml:"display,omitempty" json:"display,omitempty"`
+	Credentials        *Credentials              `yaml:"credentials,omitempty" json:"credentials,omitempty"`
 	// Binaries is a top-level TOFU path allowlist (globs). Empty = no global binary gate.
 	Binaries []string `yaml:"binaries,omitempty" json:"binaries,omitempty"`
 	// RegoPath is an optional Rego policy file evaluated after Go L4/L7 allow.
 	RegoPath string `yaml:"rego_path,omitempty" json:"rego_path,omitempty"`
 }
 
-// Filesystem is guest path policy + harden mode.
-type Filesystem struct {
+// FilesystemPolicy is Landlock path policy + workdir include flag.
+type FilesystemPolicy struct {
 	IncludeWorkdir bool     `yaml:"include_workdir" json:"include_workdir"`
-	Read           []string `yaml:"read,omitempty" json:"read,omitempty"`
-	Write          []string `yaml:"write,omitempty" json:"write,omitempty"`
-	// Mode: best_effort | required (Landlock / harden fail-closed).
-	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
+	ReadOnly       []string `yaml:"read_only,omitempty" json:"read_only,omitempty"`
+	ReadWrite      []string `yaml:"read_write,omitempty" json:"read_write,omitempty"`
+}
+
+// Landlock configures Landlock compatibility mode.
+type Landlock struct {
+	// Compatibility: best_effort | hard_requirement.
+	Compatibility string `yaml:"compatibility,omitempty" json:"compatibility,omitempty"`
 }
 
 // Process is sandbox process identity (omit to let the compute driver choose).
 type Process struct {
-	User  string `yaml:"user,omitempty" json:"user,omitempty"`
-	Group string `yaml:"group,omitempty" json:"group,omitempty"`
+	RunAsUser  string `yaml:"run_as_user,omitempty" json:"run_as_user,omitempty"`
+	RunAsGroup string `yaml:"run_as_group,omitempty" json:"run_as_group,omitempty"`
 }
 
-// Network is default-deny egress with an allow list.
-type Network struct {
-	// Default must be "deny" (or empty → deny).
-	Default string      `yaml:"default,omitempty" json:"default,omitempty"`
-	Allow   []AllowRule `yaml:"allow,omitempty" json:"allow,omitempty"`
+// NetworkPolicy is one named egress policy (map value under network_policies).
+type NetworkPolicy struct {
+	Name      string          `yaml:"name,omitempty" json:"name,omitempty"`
+	Endpoints []AllowRule     `yaml:"endpoints,omitempty" json:"endpoints,omitempty"`
+	Binaries  []NetworkBinary `yaml:"binaries,omitempty" json:"binaries,omitempty"`
 }
 
-// AllowRule is one egress allow entry (L4 + optional L7).
+// NetworkBinary restricts which binaries may use the rule (empty = any).
+type NetworkBinary struct {
+	Path string `yaml:"path" json:"path"`
+}
+
+// AllowRule is one egress endpoint (L4 + optional L7). Used under
+// network_policies.*.endpoints and as the flattened engine view.
 type AllowRule struct {
 	ID       string   `yaml:"id,omitempty" json:"id,omitempty"`
 	Host     string   `yaml:"host,omitempty" json:"host,omitempty"`
@@ -57,24 +70,25 @@ type AllowRule struct {
 	Ports    []int    `yaml:"ports,omitempty" json:"ports,omitempty"`
 	Binaries []string `yaml:"binaries,omitempty" json:"binaries,omitempty"`
 
-	// L7 (P9). Empty Protocol = L4 CONNECT tunnel only.
-	Protocol   string       `yaml:"protocol,omitempty" json:"protocol,omitempty"`     // rest | websocket | graphql | mcp
-	TLS        string       `yaml:"tls,omitempty" json:"tls,omitempty"`               // terminate | passthrough
-	Access     string       `yaml:"access,omitempty" json:"access,omitempty"`         // read-only | read-write | full
-	Path       string       `yaml:"path,omitempty" json:"path,omitempty"`             // endpoint path scope / glob
+	// L7. Empty Protocol = L4 CONNECT tunnel only.
+	Protocol   string       `yaml:"protocol,omitempty" json:"protocol,omitempty"` // rest | websocket | graphql | mcp
+	TLS        string       `yaml:"tls,omitempty" json:"tls,omitempty"`           // terminate | passthrough | clear
+	Access     string       `yaml:"access,omitempty" json:"access,omitempty"`     // read-only | read-write | full
+	Path       string       `yaml:"path,omitempty" json:"path,omitempty"`
 	Rules      []L7Rule     `yaml:"rules,omitempty" json:"rules,omitempty"`
 	DenyRules  []L7DenyRule `yaml:"deny_rules,omitempty" json:"deny_rules,omitempty"`
-	AllowedIPs []string     `yaml:"allowed_ips,omitempty" json:"allowed_ips,omitempty"` // CIDR/IP; private IPs need this
-	// Enforcement is enforce (default) or audit (log L7 violations but allow).
+	AllowedIPs []string     `yaml:"allowed_ips,omitempty" json:"allowed_ips,omitempty"`
+	// Enforcement is enforce (default) or audit.
 	Enforcement string `yaml:"enforcement,omitempty" json:"enforcement,omitempty"`
-	// CredentialKeys binds osg:resolve:env:KEY rewrite to this endpoint (OpenShell-style).
-	// Set by provider Compose; may also be authored in YAML. Empty = no static credential rewrite.
+	// CredentialKeys binds osg:resolve:env:KEY rewrite to this endpoint.
 	CredentialKeys []string `yaml:"credential_keys,omitempty" json:"credential_keys,omitempty"`
-	// WebsocketCredentialRewrite enables placeholder rewrite on client WS text frames.
-	WebsocketCredentialRewrite bool `yaml:"websocket_credential_rewrite,omitempty" json:"websocket_credential_rewrite,omitempty"`
+	WebsocketCredentialRewrite   bool `yaml:"websocket_credential_rewrite,omitempty" json:"websocket_credential_rewrite,omitempty"`
+	RequestBodyCredentialRewrite bool `yaml:"request_body_credential_rewrite,omitempty" json:"request_body_credential_rewrite,omitempty"`
+	AllowEncodedSlash            bool `yaml:"allow_encoded_slash,omitempty" json:"allow_encoded_slash,omitempty"`
+	AllowUninspectedCredentials  bool `yaml:"allow_uninspected_credentials,omitempty" json:"allow_uninspected_credentials,omitempty"`
 }
 
-// Display is the noVNC surface.
+// Display is the noVNC surface (osg product extension).
 type Display struct {
 	Mode    string `yaml:"mode,omitempty" json:"mode,omitempty"` // none | novnc
 	Publish string `yaml:"publish,omitempty" json:"publish,omitempty"`
@@ -83,13 +97,13 @@ type Display struct {
 	Browser string `yaml:"browser,omitempty" json:"browser,omitempty"`
 }
 
-// Credentials controls host-side env injection.
+// Credentials controls host-side env injection (osg product extension).
 type Credentials struct {
 	EnvAllow    []string `yaml:"env_allow,omitempty" json:"env_allow,omitempty"`
 	WriteToDisk bool     `yaml:"write_to_disk,omitempty" json:"write_to_disk,omitempty"`
 }
 
-// Load reads and parses a policy YAML file (ours or legacy-shaped).
+// Load reads and parses a policy YAML file.
 func Load(path string) (Document, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -98,14 +112,10 @@ func Load(path string) (Document, error) {
 	return Parse(b)
 }
 
-// Parse unmarshals policy YAML. legacy-shaped keys are imported automatically.
+// Parse unmarshals OpenShell-shaped policy YAML.
 func Parse(data []byte) (Document, error) {
-	if looksLegacy(data) {
-		doc, err := fromLegacy(data)
-		if err != nil {
-			return Document{}, err
-		}
-		return doc, nil
+	if err := rejectRemovedSchema(data); err != nil {
+		return Document{}, err
 	}
 	var d Document
 	if err := yaml.Unmarshal(data, &d); err != nil {
@@ -114,24 +124,22 @@ func Parse(data []byte) (Document, error) {
 	return d, nil
 }
 
-func looksLegacy(data []byte) bool {
+// rejectRemovedSchema fails closed on the removed keys (filesystem / network).
+func rejectRemovedSchema(data []byte) error {
 	var probe struct {
-		FilesystemPolicy yaml.Node `yaml:"filesystem_policy"`
-		NetworkPolicies  yaml.Node `yaml:"network_policies"`
-		Landlock         yaml.Node `yaml:"landlock"`
-		Filesystem       yaml.Node `yaml:"filesystem"`
-		Network          yaml.Node `yaml:"network"`
+		Filesystem yaml.Node `yaml:"filesystem"`
+		Network    yaml.Node `yaml:"network"`
 	}
 	if err := yaml.Unmarshal(data, &probe); err != nil {
-		return false
+		return nil
 	}
-	hasOurs := probe.Filesystem.Kind != 0 || probe.Network.Kind != 0
-	if hasOurs {
-		return false
+	if probe.Filesystem.Kind != 0 {
+		return fmt.Errorf("policy: key \"filesystem\" removed; use OpenShell naming filesystem_policy / landlock")
 	}
-	return probe.FilesystemPolicy.Kind != 0 ||
-		probe.NetworkPolicies.Kind != 0 ||
-		probe.Landlock.Kind != 0
+	if probe.Network.Kind != 0 {
+		return fmt.Errorf("policy: key \"network\" removed; use OpenShell naming network_policies")
+	}
+	return nil
 }
 
 // Validate performs fail-closed structural checks.
@@ -139,17 +147,19 @@ func (d Document) Validate() error {
 	if d.Version != 1 {
 		return fmt.Errorf("policy: version must be 1 (got %d)", d.Version)
 	}
-	if d.Filesystem != nil {
-		mode := strings.ToLower(strings.TrimSpace(d.Filesystem.Mode))
-		if mode == "" {
-			mode = "best_effort"
+	if d.Landlock != nil {
+		c := strings.ToLower(strings.TrimSpace(d.Landlock.Compatibility))
+		if c == "" {
+			c = "best_effort"
 		}
-		switch mode {
-		case "best_effort", "required":
+		switch c {
+		case "best_effort", "hard_requirement":
 		default:
-			return fmt.Errorf("policy: filesystem.mode must be best_effort|required")
+			return fmt.Errorf("policy: landlock.compatibility must be best_effort|hard_requirement")
 		}
-		paths := append(append([]string{}, d.Filesystem.Read...), d.Filesystem.Write...)
+	}
+	if d.FilesystemPolicy != nil {
+		paths := append(append([]string{}, d.FilesystemPolicy.ReadOnly...), d.FilesystemPolicy.ReadWrite...)
 		if len(paths) > 256 {
 			return fmt.Errorf("policy: too many filesystem paths (%d)", len(paths))
 		}
@@ -158,31 +168,42 @@ func (d Document) Validate() error {
 				return err
 			}
 		}
-		for _, p := range d.Filesystem.Write {
+		for _, p := range d.FilesystemPolicy.ReadWrite {
 			if p == "/" {
-				return fmt.Errorf("policy: filesystem.write must not include '/'")
+				return fmt.Errorf("policy: filesystem_policy.read_write must not include '/'")
 			}
 		}
 	}
 	if d.Process != nil {
-		if err := validateProcessIdentity("user", d.Process.User); err != nil {
+		if err := validateProcessIdentity("run_as_user", d.Process.RunAsUser); err != nil {
 			return err
 		}
-		if err := validateProcessIdentity("group", d.Process.Group); err != nil {
+		if err := validateProcessIdentity("run_as_group", d.Process.RunAsGroup); err != nil {
 			return err
 		}
 	}
-	if d.Network != nil {
-		def := strings.ToLower(strings.TrimSpace(d.Network.Default))
-		if def == "" {
-			def = "deny"
+	for key, rule := range d.NetworkPolicies {
+		name := rule.Name
+		if name == "" {
+			name = key
 		}
-		if def != "deny" {
-			return fmt.Errorf("policy: network.default must be deny (got %q)", d.Network.Default)
-		}
-		for i, rule := range d.Network.Allow {
-			if err := validateAllowRule(fmt.Sprintf("network.allow[%d]", i), rule); err != nil {
+		bins := binaryPaths(rule.Binaries)
+		for j, ep := range rule.Endpoints {
+			r := ep
+			if r.ID == "" {
+				r.ID = name
+			}
+			if len(r.Binaries) == 0 && len(bins) > 0 {
+				r.Binaries = bins
+			}
+			prefix := fmt.Sprintf("network_policies[%q].endpoints[%d]", key, j)
+			if err := validateAllowRule(prefix, r); err != nil {
 				return err
+			}
+		}
+		for j, bin := range rule.Binaries {
+			if strings.TrimSpace(bin.Path) == "" {
+				return fmt.Errorf("policy: network_policies[%q].binaries[%d]: path required", key, j)
 			}
 		}
 	}
@@ -222,6 +243,16 @@ func (d Document) Validate() error {
 	return nil
 }
 
+func binaryPaths(bins []NetworkBinary) []string {
+	var out []string
+	for _, b := range bins {
+		if p := strings.TrimSpace(b.Path); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // EffectivePorts returns ports, falling back to single Port.
 func (r AllowRule) EffectivePorts() []int {
 	if len(r.Ports) > 0 {
@@ -233,32 +264,133 @@ func (r AllowRule) EffectivePorts() []int {
 	return nil
 }
 
-// HardenMode returns best_effort when unset.
+// HardenMode returns best_effort|required from landlock.compatibility.
 func (d Document) HardenMode() string {
-	if d.Filesystem == nil {
+	if d.Landlock == nil {
 		return "best_effort"
 	}
-	c := strings.ToLower(strings.TrimSpace(d.Filesystem.Mode))
-	if c == "" {
-		return "best_effort"
-	}
-	if c == "required" {
+	c := strings.ToLower(strings.TrimSpace(d.Landlock.Compatibility))
+	if c == "hard_requirement" {
 		return "required"
 	}
 	return "best_effort"
 }
 
-// AllowRules returns network.allow plus expanded inference rules (nil-safe).
-func (d Document) AllowRules() []AllowRule {
-	var out []AllowRule
-	if d.Network != nil {
-		out = append(out, d.Network.Allow...)
+// FSRead returns filesystem_policy.read_only (nil-safe).
+func (d Document) FSRead() []string {
+	if d.FilesystemPolicy == nil {
+		return nil
 	}
+	return d.FilesystemPolicy.ReadOnly
+}
+
+// FSWrite returns filesystem_policy.read_write (nil-safe).
+func (d Document) FSWrite() []string {
+	if d.FilesystemPolicy == nil {
+		return nil
+	}
+	return d.FilesystemPolicy.ReadWrite
+}
+
+// IncludeWorkdir reports filesystem_policy.include_workdir.
+func (d Document) IncludeWorkdir() bool {
+	return d.FilesystemPolicy != nil && d.FilesystemPolicy.IncludeWorkdir
+}
+
+// ProcessUser returns process.run_as_user.
+func (d Document) ProcessUser() string {
+	if d.Process == nil {
+		return ""
+	}
+	return d.Process.RunAsUser
+}
+
+// ProcessGroup returns process.run_as_group.
+func (d Document) ProcessGroup() string {
+	if d.Process == nil {
+		return ""
+	}
+	return d.Process.RunAsGroup
+}
+
+// NetworkAllows flattens network_policies endpoints (no inference).
+func (d Document) NetworkAllows() []AllowRule {
+	if len(d.NetworkPolicies) == 0 {
+		return nil
+	}
+	// Stable-ish order: sort keys.
+	keys := make([]string, 0, len(d.NetworkPolicies))
+	for k := range d.NetworkPolicies {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var out []AllowRule
+	for _, key := range keys {
+		rule := d.NetworkPolicies[key]
+		name := rule.Name
+		if name == "" {
+			name = key
+		}
+		bins := binaryPaths(rule.Binaries)
+		for _, ep := range rule.Endpoints {
+			r := ep
+			if r.ID == "" {
+				r.ID = name
+			}
+			if len(r.Binaries) == 0 && len(bins) > 0 {
+				r.Binaries = append([]string{}, bins...)
+			}
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// AllowRules returns network_policies endpoints plus expanded inference rules.
+func (d Document) AllowRules() []AllowRule {
+	out := d.NetworkAllows()
 	inf, err := ExpandInferenceRules(d.Inference)
 	if err == nil {
 		out = append(out, inf...)
 	}
 	return out
+}
+
+// SetNetworkAllows replaces network_policies with one entry per allow rule id.
+func (d *Document) SetNetworkAllows(rules []AllowRule) {
+	if len(rules) == 0 {
+		d.NetworkPolicies = nil
+		return
+	}
+	out := make(map[string]NetworkPolicy, len(rules))
+	for i, r := range rules {
+		key := strings.TrimSpace(r.ID)
+		if key == "" {
+			key = fmt.Sprintf("rule_%d", i)
+		}
+		ep := r
+		ep.ID = ""
+		bins := r.Binaries
+		ep.Binaries = nil
+		var nb []NetworkBinary
+		for _, b := range bins {
+			nb = append(nb, NetworkBinary{Path: b})
+		}
+		if existing, ok := out[key]; ok {
+			existing.Endpoints = append(existing.Endpoints, ep)
+			if len(existing.Binaries) == 0 {
+				existing.Binaries = nb
+			}
+			out[key] = existing
+			continue
+		}
+		out[key] = NetworkPolicy{
+			Name:      key,
+			Endpoints: []AllowRule{ep},
+			Binaries:  nb,
+		}
+	}
+	d.NetworkPolicies = out
 }
 
 // Enforcement modes.
@@ -318,9 +450,9 @@ func validateL7(prefix string, rule AllowRule) error {
 		return fmt.Errorf("policy: %s: protocol must be rest|websocket|graphql|mcp (got %q)", prefix, rule.Protocol)
 	}
 	switch tlsMode {
-	case "", TLSTerminate, TLSPassthrough:
+	case "", TLSTerminate, TLSPassthrough, "clear":
 	default:
-		return fmt.Errorf("policy: %s: tls must be terminate|passthrough (got %q)", prefix, rule.TLS)
+		return fmt.Errorf("policy: %s: tls must be terminate|passthrough|clear (got %q)", prefix, rule.TLS)
 	}
 	if tlsMode == TLSTerminate && proto == "" {
 		return fmt.Errorf("policy: %s: tls: terminate requires protocol", prefix)
@@ -336,7 +468,6 @@ func validateL7(prefix string, rule AllowRule) error {
 	if rule.NeedsL7() {
 		switch proto {
 		case ProtocolREST, ProtocolWebsocket, ProtocolGraphQL, ProtocolMCP:
-			// ok
 		case "":
 			return fmt.Errorf("policy: %s: L7 fields require protocol", prefix)
 		default:
@@ -355,7 +486,6 @@ func validateL7(prefix string, rule AllowRule) error {
 				return fmt.Errorf("policy: %s.rules[%d]: allow required", prefix, i)
 			}
 		}
-		// HTTPS + L7 needs terminate so the proxy can inspect.
 		for _, p := range rule.EffectivePorts() {
 			if p == defaults.HTTPSPort && tlsMode != TLSTerminate {
 				return fmt.Errorf("policy: %s: port %d with L7 requires tls: terminate", prefix, defaults.HTTPSPort)

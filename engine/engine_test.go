@@ -17,14 +17,11 @@ func TestRegoDenyHost(t *testing.T) {
 	if err := os.WriteFile(rego, []byte("deny host evil.example\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	doc := policy.Document{
-		Version:  1,
-		RegoPath: rego,
-		Network: &policy.Network{Allow: []policy.AllowRule{
-			{Host: "evil.example", Port: 443},
-			{Host: "good.example", Port: 443},
-		}},
-	}
+	doc := policy.Document{Version: 1, RegoPath: rego}
+	doc.SetNetworkAllows([]policy.AllowRule{
+		{Host: "evil.example", Port: 443},
+		{Host: "good.example", Port: 443},
+	})
 	var eng engine.Allowlist
 	if err := eng.Apply(doc); err != nil {
 		t.Fatal(err)
@@ -47,11 +44,8 @@ func TestBinaryTOFU(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc := policy.Document{
-		Version:  1,
-		Binaries: []string{bin},
-		Network:  &policy.Network{Allow: []policy.AllowRule{{Host: "example.com", Port: 443}}},
-	}
+	doc := policy.Document{Version: 1, Binaries: []string{bin}}
+	doc.SetNetworkAllows([]policy.AllowRule{{Host: "example.com", Port: 443}})
 	var eng engine.Allowlist
 	eng.SetTOFU(store)
 	if err := eng.Apply(doc); err != nil {

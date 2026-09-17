@@ -134,11 +134,11 @@ func (a *Allowlist) Decide(ctx context.Context, req EgressRequest) (Decision, er
 	}
 	ep, ok := a.matchL4(req)
 	if !ok {
-		return Decision{Allow: false, Reason: "default deny (no matching network.allow)"}, nil
+		return Decision{Allow: false, Reason: "default deny (no matching network_policies)"}, nil
 	}
 	dec := Decision{
 		Allow:  true,
-		Reason: "matched network.allow." + ep.ruleID + " " + displayHost(ep) + ":" + strconv.Itoa(req.Port),
+		Reason: "matched network_policies." + ep.ruleID + " " + displayHost(ep) + ":" + strconv.Itoa(req.Port),
 		Matched: &MatchedRule{
 			ID:         ep.ruleID,
 			Host:       req.Host,
@@ -160,7 +160,7 @@ func (a *Allowlist) DecideHTTP(ctx context.Context, req HTTPRequest) (Decision, 
 	}
 	ep, ok := a.matchL4(EgressRequest{Host: req.Host, Port: req.Port, Binary: req.Binary})
 	if !ok {
-		return Decision{Allow: false, Reason: "default deny (no matching network.allow)"}, nil
+		return Decision{Allow: false, Reason: "default deny (no matching network_policies)"}, nil
 	}
 	matched := &MatchedRule{
 		ID:         ep.ruleID,
@@ -194,7 +194,7 @@ func (a *Allowlist) DecideHTTP(ctx context.Context, req HTTPRequest) (Decision, 
 	}
 	return Decision{
 		Allow:   true,
-		Reason:  "matched network.allow." + ep.ruleID + " " + reason,
+		Reason:  "matched network_policies." + ep.ruleID + " " + reason,
 		Matched: matched,
 	}, nil
 }
@@ -233,10 +233,10 @@ func (a *Allowlist) matchL4(req EgressRequest) (compiledEndpoint, bool) {
 		if _, ok := ep.ports[req.Port]; !ok {
 			continue
 		}
-		if len(ep.binaries) > 0 {
-			if req.Binary == "" {
-				continue // rule restricted to binaries; skip when unknown
-			}
+		if len(ep.binaries) > 0 && req.Binary != "" {
+			// When peer binary is unknown (Docker Desktop / no SO_PEERCRED), still
+			// match on host:port — same fail-open as gateBinary without OSG_REQUIRE_BINARY.
+			// Known binaries that are not on the list are skipped.
 			if !binaryAllowed(ep.binaries, req.Binary) {
 				continue
 			}

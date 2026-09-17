@@ -9,16 +9,11 @@ import (
 )
 
 func TestBinaryScopedRule(t *testing.T) {
-	doc := policy.Document{
-		Version: 1,
-		Network: &policy.Network{
-			Default: "deny",
-			Allow: []policy.AllowRule{{
-				ID: "curl-only", Host: "example.com", Port: 443,
-				Binaries: []string{"/usr/bin/curl"},
-			}},
-		},
-	}
+	doc := policy.Document{Version: 1}
+	doc.SetNetworkAllows([]policy.AllowRule{{
+		ID: "curl-only", Host: "example.com", Port: 443,
+		Binaries: []string{"/usr/bin/curl"},
+	}})
 	eng := &engine.Allowlist{}
 	if err := eng.Apply(doc); err != nil {
 		t.Fatal(err)
@@ -32,24 +27,19 @@ func TestBinaryScopedRule(t *testing.T) {
 		t.Fatal("wget should deny")
 	}
 	d, _ = eng.Decide(context.Background(), engine.EgressRequest{Host: "example.com", Port: 443})
-	if d.Allow {
-		t.Fatal("empty binary should not match binary-scoped rule")
+	if !d.Allow {
+		t.Fatalf("empty binary should match host:port when peercred unknown: %s", d.Reason)
 	}
 }
 
 func TestBinaryGlobRecursive(t *testing.T) {
-	doc := policy.Document{
-		Version: 1,
-		Network: &policy.Network{
-			Default: "deny",
-			Allow: []policy.AllowRule{{
-				ID: "cursor", Host: "api2.cursor.sh", Port: 443,
-				Binaries: []string{"/opt/cursor-agent/**"},
-				CredentialKeys: []string{"CURSOR_API_KEY"},
-				Protocol: "rest", TLS: "terminate", Access: "read-write",
-			}},
-		},
-	}
+	doc := policy.Document{Version: 1}
+	doc.SetNetworkAllows([]policy.AllowRule{{
+		ID: "cursor", Host: "api2.cursor.sh", Port: 443,
+		Binaries:       []string{"/opt/cursor-agent/**"},
+		CredentialKeys: []string{"CURSOR_API_KEY"},
+		Protocol:       "rest", TLS: "terminate", Access: "read-write",
+	}})
 	eng := &engine.Allowlist{}
 	if err := eng.Apply(doc); err != nil {
 		t.Fatal(err)
@@ -65,16 +55,11 @@ func TestBinaryGlobRecursive(t *testing.T) {
 }
 
 func TestAuditEnforcementL7(t *testing.T) {
-	doc := policy.Document{
-		Version: 1,
-		Network: &policy.Network{
-			Default: "deny",
-			Allow: []policy.AllowRule{{
-				ID: "ro", Host: "api.example.com", Port: 80,
-				Protocol: "rest", Access: "read-only", Enforcement: "audit",
-			}},
-		},
-	}
+	doc := policy.Document{Version: 1}
+	doc.SetNetworkAllows([]policy.AllowRule{{
+		ID: "ro", Host: "api.example.com", Port: 80,
+		Protocol: "rest", Access: "read-only", Enforcement: "audit",
+	}})
 	eng := &engine.Allowlist{}
 	if err := eng.Apply(doc); err != nil {
 		t.Fatal(err)
