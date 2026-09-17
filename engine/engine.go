@@ -8,6 +8,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/zorneth/osg-core/hostpattern"
 	"github.com/zorneth/osg-core/policy"
@@ -65,6 +66,7 @@ type compiledEndpoint struct {
 
 // Allowlist is a default-deny host/port (+ optional L7) engine.
 type Allowlist struct {
+	mu         sync.RWMutex
 	doc        policy.Document
 	endpoints  []compiledEndpoint
 	topBins    []string
@@ -74,7 +76,11 @@ type Allowlist struct {
 }
 
 // SetTOFU installs a trust-on-first-use store for binary fingerprints.
-func (a *Allowlist) SetTOFU(s *tofu.Store) { a.tofu = s }
+func (a *Allowlist) SetTOFU(s *tofu.Store) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.tofu = s
+}
 
 // Apply replaces the active policy document and compiles host patterns.
 func (a *Allowlist) Apply(doc policy.Document) error {
@@ -119,16 +125,20 @@ func (a *Allowlist) Apply(doc policy.Document) error {
 		}
 		gate = g
 	}
+	a.mu.Lock()
 	a.doc = doc
 	a.endpoints = compiled
 	a.topBins = append([]string{}, doc.Binaries...)
 	a.anyRuleBin = anyRuleBin
 	a.rego = gate
+	a.mu.Unlock()
 	return nil
 }
 
 // Decide authorizes host:port (and optional binary). Default deny.
 func (a *Allowlist) Decide(ctx context.Context, req EgressRequest) (Decision, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	if err := a.gateBinary(req.Binary); err != nil {
 		return Decision{Allow: false, Reason: err.Error()}, nil
 	}
@@ -155,6 +165,8 @@ func (a *Allowlist) Decide(ctx context.Context, req EgressRequest) (Decision, er
 
 // DecideHTTP authorizes an HTTP method/path after L4 match.
 func (a *Allowlist) DecideHTTP(ctx context.Context, req HTTPRequest) (Decision, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	if err := a.gateBinary(req.Binary); err != nil {
 		return Decision{Allow: false, Reason: err.Error()}, nil
 	}
