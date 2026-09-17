@@ -15,15 +15,15 @@ import (
 
 // Document is the canonical sandbox policy (OpenShell YAML naming).
 type Document struct {
-	Version            int                       `yaml:"version" json:"version"`
-	FilesystemPolicy   *FilesystemPolicy         `yaml:"filesystem_policy,omitempty" json:"filesystem_policy,omitempty"`
-	Landlock           *Landlock                 `yaml:"landlock,omitempty" json:"landlock,omitempty"`
-	Process            *Process                  `yaml:"process,omitempty" json:"process,omitempty"`
-	NetworkPolicies    map[string]NetworkPolicy  `yaml:"network_policies,omitempty" json:"network_policies,omitempty"`
-	NetworkMiddlewares map[string]yaml.Node      `yaml:"network_middlewares,omitempty" json:"network_middlewares,omitempty"`
-	Inference          *Inference                `yaml:"inference,omitempty" json:"inference,omitempty"`
-	Display            *Display                  `yaml:"display,omitempty" json:"display,omitempty"`
-	Credentials        *Credentials              `yaml:"credentials,omitempty" json:"credentials,omitempty"`
+	Version            int                      `yaml:"version" json:"version"`
+	FilesystemPolicy   *FilesystemPolicy        `yaml:"filesystem_policy,omitempty" json:"filesystem_policy,omitempty"`
+	Landlock           *Landlock                `yaml:"landlock,omitempty" json:"landlock,omitempty"`
+	Process            *Process                 `yaml:"process,omitempty" json:"process,omitempty"`
+	NetworkPolicies    map[string]NetworkPolicy `yaml:"network_policies,omitempty" json:"network_policies,omitempty"`
+	NetworkMiddlewares map[string]yaml.Node     `yaml:"network_middlewares,omitempty" json:"network_middlewares,omitempty"`
+	Inference          *Inference               `yaml:"inference,omitempty" json:"inference,omitempty"`
+	Display            *Display                 `yaml:"display,omitempty" json:"display,omitempty"`
+	Credentials        *Credentials             `yaml:"credentials,omitempty" json:"credentials,omitempty"`
 	// Binaries is a top-level TOFU path allowlist (globs). Empty = no global binary gate.
 	Binaries []string `yaml:"binaries,omitempty" json:"binaries,omitempty"`
 	// RegoPath is an optional Rego policy file evaluated after Go L4/L7 allow.
@@ -81,11 +81,11 @@ type AllowRule struct {
 	// Enforcement is enforce (default) or audit.
 	Enforcement string `yaml:"enforcement,omitempty" json:"enforcement,omitempty"`
 	// CredentialKeys binds osg:resolve:env:KEY rewrite to this endpoint.
-	CredentialKeys []string `yaml:"credential_keys,omitempty" json:"credential_keys,omitempty"`
-	WebsocketCredentialRewrite   bool `yaml:"websocket_credential_rewrite,omitempty" json:"websocket_credential_rewrite,omitempty"`
-	RequestBodyCredentialRewrite bool `yaml:"request_body_credential_rewrite,omitempty" json:"request_body_credential_rewrite,omitempty"`
-	AllowEncodedSlash            bool `yaml:"allow_encoded_slash,omitempty" json:"allow_encoded_slash,omitempty"`
-	AllowUninspectedCredentials  bool `yaml:"allow_uninspected_credentials,omitempty" json:"allow_uninspected_credentials,omitempty"`
+	CredentialKeys               []string `yaml:"credential_keys,omitempty" json:"credential_keys,omitempty"`
+	WebsocketCredentialRewrite   bool     `yaml:"websocket_credential_rewrite,omitempty" json:"websocket_credential_rewrite,omitempty"`
+	RequestBodyCredentialRewrite bool     `yaml:"request_body_credential_rewrite,omitempty" json:"request_body_credential_rewrite,omitempty"`
+	AllowEncodedSlash            bool     `yaml:"allow_encoded_slash,omitempty" json:"allow_encoded_slash,omitempty"`
+	AllowUninspectedCredentials  bool     `yaml:"allow_uninspected_credentials,omitempty" json:"allow_uninspected_credentials,omitempty"`
 }
 
 // Display is the noVNC surface (osg product extension).

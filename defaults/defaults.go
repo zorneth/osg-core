@@ -33,12 +33,23 @@ const (
 	GuestPolicy = "/osg/policy.yaml"
 	GuestInit   = "/osg/osg-init"
 	GuestPath   = "/osg/data/home/.local/bin:/osg/data/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+	// GuestEtcOSG is the reserved control tree for agent guidance (skills, payload).
+	// Same role as OpenShell's /etc/openshell; osg naming, MIT-owned content.
+	GuestEtcOSG       = "/etc/osg"
+	GuestSkills       = "/etc/osg/skills"
+	GuestAgentPayload = "/etc/osg/agent-payload"
+
+	// GuestSandboxHome mirrors OpenShell harness HOME (/sandbox/home).
+	// Symlinked to GuestHome on agent-config install so persist volume stays canonical.
+	GuestSandboxRoot = "/sandbox"
+	GuestSandboxHome = "/sandbox/home"
 )
 
 // NoProxyValue is the default NO_PROXY / no_proxy list for sandbox guests.
 const NoProxyValue = "localhost,127.0.0.1,::1"
 
-// Sandbox image tags.
+// Sandbox image tags (local dev) and GHCR catalog (OpenShell-style paths).
 const (
 	ImageDebian = "debian:bookworm"
 	ImageLocal  = "osg-sandbox:local"
@@ -47,6 +58,17 @@ const (
 	ImageCursor = "osg-sandbox:cursor"
 	ImageClaude = "osg-sandbox:claude"
 	ImageCodex  = "osg-sandbox:codex"
+
+	// GHCR: separate image per flavor (like openshell-community/sandboxes/<name>).
+	GHCROrg        = "ghcr.io/zorneth"
+	GHCRGateway    = GHCROrg + "/osg/gateway"
+	GHCRSandboxes  = GHCROrg + "/osg/sandboxes"
+	ImageBaseRef   = GHCRSandboxes + "/base:latest"
+	ImageGUIRef    = GHCRSandboxes + "/gui:latest"
+	ImageGPURef    = GHCRSandboxes + "/gpu:latest"
+	ImageCursorRef = GHCRSandboxes + "/cursor:latest"
+	ImageClaudeRef = GHCRSandboxes + "/claude:latest"
+	ImageCodexRef  = GHCRSandboxes + "/codex:latest"
 )
 
 // Guest SSH layout (osg-sshd).
