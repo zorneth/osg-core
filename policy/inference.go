@@ -81,12 +81,11 @@ var BuiltinProviders = map[string]ProviderPreset{
 		}},
 		EnvKeys: []string{"GROQ_API_KEY"},
 	},
-	// Host-backed models via Docker Desktop / Linux docker bridge DNS.
+	// Host-backed models via host.osg.internal (OpenShell: host.openshell.internal).
 	"local": {
 		ID: "local",
 		Rules: []AllowRule{
-			{ID: "inference.local-docker", Host: "host.docker.internal", Ports: []int{11434, 1234, 8000, 8080}},
-			{ID: "inference.local-loop", Host: "host.osg.internal", Ports: []int{11434, 1234, 8000, 8080}},
+			{ID: "inference.local", Host: "host.osg.internal", Ports: []int{11434, 1234, 8000, 8080}},
 		},
 		EnvKeys: nil,
 	},
