@@ -88,6 +88,7 @@ func main() {
 
 | Resource | Link |
 |----------|------|
+| Roadmap | [ROADMAP.md](./ROADMAP.md) |
 | Organization | [https://github.com/zorneth](https://github.com/zorneth) |
 | Organization overview | [github.com/zorneth](https://github.com/zorneth) |
 | pkg.go.dev | [`github.com/zorneth/osg-core`](https://pkg.go.dev/github.com/zorneth/osg-core) |
